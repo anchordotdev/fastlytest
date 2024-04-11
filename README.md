@@ -15,46 +15,59 @@ sample `main_test.go`
 ``` go
 //go:build !wasip1 || nofastlyhostcalls
 
-// ^ important build tags to prevent TestMain from re-running in the WASM VM
+// ^ important build tags
 
-package foo
+package fastlytest
 
-import "github.com/anchordotdev/fastlytest"
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"testing"
+)
 
 func TestMain(m *testing.M) {
-	// wrap the whole func body so that defers still run before exit
-	os.Exit(func() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-		// start a backend server on the host
-	
-		srv := httptest.NewServer(nil)
-		defer srv.Close()
-	
-		// create fastly config, add fe-cails backend to it
-	
-		cfg := fastlytest.Config{
-			LocalServer: fastlytest.LocalServer{
-				Backends: map[string]fastlytest.Backend{
-					"test-backend": { URL: srv.URL },
+	// create a test server for each handler to test, this one sets the
+	// response body to the request's Via header
+
+	srvVia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Server", "test-via")
+	}))
+	defer srvVia.Close()
+
+	// create fastly config, add a backend for each test server
+
+	cfg := Config{
+		LocalServer: LocalServer{
+			Backends: map[string]Backend{
+				"test-via": {
+					URL: srvVia.URL,
 				},
 			},
-		}
-	
-		// create viceroy runner, set the config
-	
-		vic, err := fastlytest.NewViceroy(cfg)
-		if err != nil {
-			panic(err)
-		}
-		defer vic.Cleanup()
+		},
+	}
 
+	// create viceroy runner, set the config
+
+	vic, err := NewViceroy(cfg)
+	if err != nil {
+		panic(err)
+	}
+	defer vic.Cleanup()
+
+	// exit with the same code after the tests have run via viceroy to indicate pass/fail
+
+	os.Exit(func() int {
 		// execute the go test command for this package via viceroy
 		if err = vic.GoTestPkg(ctx, "fastlytest").Run(); err == nil {
 			return 0
 		}
-
-		// exit with the same code after the tests have run via viceroy to
-		// indicate pass/fail
 
 		var eerr *exec.ExitError
 		if errors.Is(err, eerr) {
@@ -71,30 +84,36 @@ to the server on the host:
 sample `compute_test.go`:
 
 ``` go
+package fastlytest
+
+import (
+	"context"
+	"testing"
+
+	"github.com/fastly/compute-sdk-go/fsthttp"
+	"github.com/fastly/compute-sdk-go/fsttest"
+)
+
 func TestVia(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// edge "middleware" to test
+	const hdrVia = "1.1 viceroy-test-vm"
 
 	hdlVia := fsthttp.HandlerFunc(func(ctx context.Context, w fsthttp.ResponseWriter, r *fsthttp.Request) {
-        // proxy this request to the httptest.Server running on the host
+		r.Header.Add("Via", hdrVia)
 
-		res, err := r.Send(ctx, "test-backend") // backend name from the Config
+		res, err := r.Send(ctx, "test-via")
 		if err != nil {
 			fsthttp.Error(w, err.Error(), 500)
 			return
 		}
 
-		// Add a 'Via' header to the response
-
 		w.Header().Reset(res.Header)
-		w.Header().Add("Via", "1.1 viceroy-test-vm")
+		w.Header().Add("Via", hdrVia)
 
 		w.WriteHeader(res.StatusCode)
 	})
-
-	// build a test request and send it into the handler, and record the response
 
 	r, err := fsthttp.NewRequest("GET", "http://pong.example.test/", nil)
 	if err != nil {
@@ -108,8 +127,17 @@ func TestVia(t *testing.T) {
 	if want, got := fsthttp.StatusOK, w.Code; want != got {
 		t.Errorf("want status code %d, got %d", want, got)
 	}
-	if want, got := "1.1 viceroy-test-vm", w.HeaderMap.Get("Via"); want != got {
+
+	// assert the header set in hdlVia
+
+	if want, got := hdrVia, w.HeaderMap.Get("Via"); want != got {
 		t.Errorf("want via header %q, got %q", want, got)
+	}
+
+	// assert the header set in srvVia
+
+	if want, got := "test-via", w.HeaderMap.Get("Server"); want != got {
+		t.Errorf("want server header %q, got %q", want, got)
 	}
 }
 ```

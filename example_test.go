@@ -8,19 +8,23 @@ import (
 	"github.com/fastly/compute-sdk-go/fsttest"
 )
 
-func TestPong(t *testing.T) {
+func TestVia(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	const hdrVia = "1.1 viceroy-test-vm"
+
 	hdlVia := fsthttp.HandlerFunc(func(ctx context.Context, w fsthttp.ResponseWriter, r *fsthttp.Request) {
-		res, err := r.Send(ctx, "pong")
+		r.Header.Add("Via", hdrVia)
+
+		res, err := r.Send(ctx, "test-via")
 		if err != nil {
 			fsthttp.Error(w, err.Error(), 500)
 			return
 		}
 
 		w.Header().Reset(res.Header)
-		w.Header().Add("Via", "1.1 viceroy-test-vm")
+		w.Header().Add("Via", hdrVia)
 
 		w.WriteHeader(res.StatusCode)
 	})
@@ -37,7 +41,16 @@ func TestPong(t *testing.T) {
 	if want, got := fsthttp.StatusOK, w.Code; want != got {
 		t.Errorf("want status code %d, got %d", want, got)
 	}
-	if want, got := "1.1 viceroy-test-vm", w.HeaderMap.Get("Via"); want != got {
+
+	// assert the header set in hdlVia
+
+	if want, got := hdrVia, w.HeaderMap.Get("Via"); want != got {
 		t.Errorf("want via header %q, got %q", want, got)
+	}
+
+	// assert the header set in srvVia
+
+	if want, got := "test-via", w.HeaderMap.Get("Server"); want != got {
+		t.Errorf("want server header %q, got %q", want, got)
 	}
 }

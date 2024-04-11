@@ -18,20 +18,21 @@ func TestMain(m *testing.M) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// start a backend server on the host
+	// create a test server for each handler to test, this one sets the
+	// response body to the request's Via header
 
-	srvPong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("pong!"))
+	srvVia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Server", "test-via")
 	}))
-	defer srvPong.Close()
+	defer srvVia.Close()
 
-	// create fastly config, add fe-cails backend to it
+	// create fastly config, add a backend for each test server
 
 	cfg := Config{
 		LocalServer: LocalServer{
 			Backends: map[string]Backend{
-				"pong": {
-					URL: srvPong.URL,
+				"test-via": {
+					URL: srvVia.URL,
 				},
 			},
 		},

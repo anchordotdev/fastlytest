@@ -15,8 +15,6 @@ func TestVia(t *testing.T) {
 	const hdrVia = "1.1 viceroy-test-vm"
 
 	hdlVia := fsthttp.HandlerFunc(func(ctx context.Context, w fsthttp.ResponseWriter, r *fsthttp.Request) {
-		r.Header.Add("Via", hdrVia)
-
 		res, err := r.Send(ctx, "test-via")
 		if err != nil {
 			fsthttp.Error(w, err.Error(), 500)
@@ -48,9 +46,9 @@ func TestVia(t *testing.T) {
 		t.Errorf("want via header %q, got %q", want, got)
 	}
 
-	// assert the header set in srvVia
+	// assert the header set in srvCustom
 
-	if want, got := "test-via", w.HeaderMap.Get("Server"); want != got {
+	if want, got := "httptest-server", w.HeaderMap.Get("Server"); want != got {
 		t.Errorf("want server header %q, got %q", want, got)
 	}
 }
